@@ -300,8 +300,8 @@ if torch.cuda.is_available():
 enc = tiktoken.get_encoding("gpt2")
 
 total_batch_size = 524288 # 2**19, ~0.5M, in number of tokens
-B = 8 # micro batch size
-T = 512 # sequence length
+B = 4 # micro batch size
+T = 64 # sequence length
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 if master_process:
@@ -354,13 +354,14 @@ with open(log_file, "w") as f: # open for writing to clear the file
 for step in range(max_steps):
     t0 = time.time()
     last_step = (step == max_steps - 1)
-    loss_accum = 0.0
-
-    # TODO: Implement the training loop
+    
+    # TODO: Implement the training step
+    
     
     if device_type == "cuda":
         torch.cuda.synchronize() # wait for the GPU to finish work
 
+    # Print loss and token throughput
     t1 = time.time()
     dt = t1 - t0 # time difference in seconds
     tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
