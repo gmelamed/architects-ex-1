@@ -317,7 +317,7 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(vocab_size=50304))
 # model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
 model.to(device)
-use_compile = True
+use_compile = False
 if use_compile:
     model = torch.compile(model)
 if ddp:
