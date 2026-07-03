@@ -320,6 +320,7 @@ max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 715
 max_steps = 100 # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+val_iters = 10
 
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
@@ -348,10 +349,37 @@ for step in range(max_steps):
     t0 = time.time()
     last_step = (step == max_steps - 1)
 
-    
-    # TODO: Implement the training step
-    
-    
+    # Validate every 20 steps at first, then every 100 steps after step 50
+    val_interval = 20 if step < 50 else 100
+    if step % val_interval == 0 or last_step:
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for _ in range(val_iters):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                _, loss = model(x, y)
+                val_loss += loss.item()
+        val_loss /= val_iters
+        model.train()
+        if master_process:
+            print(f"step {step:5d} | val_loss: {val_loss:.6f}")
+            with open(log_file, "a") as f:
+                f.write(f"{step} val {val_loss:.6f}\n")
+
+    # Training step
+    x, y = train_loader.next_batch()
+    x, y = x.to(device), y.to(device)
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    # Set learning rate for this step
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    optimizer.step()
+
     if device_type == "cuda":
         torch.cuda.synchronize() # wait for the GPU to finish work
 
