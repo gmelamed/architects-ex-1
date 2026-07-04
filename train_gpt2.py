@@ -65,6 +65,7 @@ class Block(nn.Module):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
+        # self.attn = F.scaled_dot_product_attention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
 
@@ -316,11 +317,12 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(vocab_size=50304))
 # model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
 model.to(device)
+model = torch.compile(model)
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 715
-max_steps = 1000 # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
-val_iters = 10
+max_steps = 1100 # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+val_iters = 200
 
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
