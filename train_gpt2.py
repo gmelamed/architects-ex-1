@@ -307,8 +307,8 @@ if torch.cuda.is_available():
 
 enc = tiktoken.get_encoding("gpt2")
 
-B = 4 # micro batch size
-T = 64 # sequence length
+B = 32 # micro batch size
+T = 1024 # sequence length
 
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
 val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
