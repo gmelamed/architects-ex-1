@@ -358,7 +358,8 @@ for step in range(max_steps):
             for _ in range(val_iters):
                 x, y = val_loader.next_batch()
                 x, y = x.to(device), y.to(device)
-                _, loss = model(x, y)
+                with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
+                    _, loss = model(x, y)
                 val_loss += loss.item()
         val_loss /= val_iters
         model.train()
@@ -371,7 +372,8 @@ for step in range(max_steps):
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+    with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     # Set learning rate for this step
