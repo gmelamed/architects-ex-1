@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from hf_checkpoint import save_and_upload_checkpoint
 
 # -----------------------------------------------------------------------------
 
@@ -307,7 +308,7 @@ if torch.cuda.is_available():
 
 enc = tiktoken.get_encoding("gpt2")
 
-B = 32 # micro batch size
+B = 64 # micro batch size
 T = 1024 # sequence length
 
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
@@ -320,10 +321,13 @@ model = GPT(GPTConfig(vocab_size=50304))
 # model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
 model.to(device)
 model = torch.compile(model)
+if ddp:
+    model = DDP(model, device_ids=[ddp_local_rank])
+raw_model = model.module if ddp else model
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 715
-max_steps = 1100 # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+max_steps = 5000 # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
 val_iters = 200
 
 def get_lr(it):
@@ -340,7 +344,10 @@ def get_lr(it):
     return min_lr + coeff * (max_lr - min_lr)
 
 # optimize!
-optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=max_lr, device_type=device_type)
+if ddp:
+    optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=max_lr, device_type=device_type)
+else:
+    optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=max_lr, device_type=device_type)
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"
@@ -366,11 +373,17 @@ for step in range(max_steps):
                     _, loss = model(x, y)
                 val_loss += loss.item()
         val_loss /= val_iters
+        if ddp:
+            val_loss_tensor = torch.tensor(val_loss, device=device)
+            dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.AVG)
+            val_loss = val_loss_tensor.item()
         model.train()
         if master_process:
             print(f"step {step:5d} | val_loss: {val_loss:.6f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} val {val_loss:.6f}\n")
+            if step % 1000 == 0 or last_step:
+                save_and_upload_checkpoint(raw_model, step, val_loss, "/mnt/models/gmelamed")
 
     # Training step
     x, y = train_loader.next_batch()
@@ -379,6 +392,12 @@ for step in range(max_steps):
     with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
         logits, loss = model(x, y)
     loss.backward()
+    # all-reduce the loss for logging so every process sees the global average
+    if ddp:
+        loss_for_log = loss.detach()
+        dist.all_reduce(loss_for_log, op=dist.ReduceOp.AVG)
+    else:
+        loss_for_log = loss.detach()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     # Set learning rate for this step
     lr = get_lr(step)
@@ -395,9 +414,9 @@ for step in range(max_steps):
     tokens_processed = train_loader.B * train_loader.T * ddp_world_size
     tokens_per_sec = tokens_processed / dt
     if master_process:
-        print(f"step {step:5d} | loss: {loss.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+        print(f"step {step:5d} | loss: {loss_for_log.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
         with open(log_file, "a") as f:
-            f.write(f"{step} train {loss.item():.6f}\n")
+            f.write(f"{step} train {loss_for_log.item():.6f}\n")
 
 if ddp:
     destroy_process_group()
